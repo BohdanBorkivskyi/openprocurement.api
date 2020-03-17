@@ -1,161 +1,51 @@
-stages:
-  - build
-  - deploy
-  - robot
-  - test
-  - repos
-  - cleanup
-
+image: docker:19.03.1
 variables:
+  #GIT_SUBMODULE_STRATEGY: recursive
   COUCHDB_USER: op
   COUCHDB_PASSWORD: op
-  GIT_STRATEGY: none
-
-.werf:
-  before_script:
-    - type multiwerf && source <(multiwerf use 1.0 beta)
-    - type werf && source <(werf ci-env gitlab --tagging-strategy tag-or-branch --verbose)
+  #GIT_STRATEGY: none
 
 
-.build:
-  extends: .werf
-  stage: build
-  script:
-    - werf build-and-publish
-  except:
-    - schedules
-  tags:
-    - shell
-  variables:
-    GIT_STRATEGY: fetch
-    WERF_STAGES_STORAGE: ":local"
+# services:
+#   - docker:19.03.1-dind
+
+stages:
+  - build
+  - test
 
 build:
-  extends: .build
-  only:
-    - branches
-  variables:
-    WERF_TAG_GIT_COMMIT: ci-$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
-
-build_master:
-  extends: .build
-  only:
-    - master
-  variables:
-    WERF_TAG_GIT_BRANCH: $CI_COMMIT_REF_SLUG
-
-build_tag:
-  extends: .build
-  only:
-    - tags
-  variables:
-    WERF_TAG_GIT_TAG: $CI_COMMIT_TAG
-
-add to repo:
-  stage: repos
-  tags:
-    - repo-staging
+  stage: build
+  before_script:
+  - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN registry.gitlab.quintagroup.com:443
   script:
-    - echo "Who run user = ${GITLAB_USER_NAME} ; email = ${GITLAB_USER_EMAIL} ; login =  ${GITLAB_USER_LOGIN} ;"
-    - 'curl --header "PRIVATE-TOKEN: $API_TOKEN_REPO_STAGING" https://git.prozorro.gov.ua/api/v4/projects/$CI_PROJECT_ID/repository/archive?sha=$CI_COMMIT_SHORT_SHA -o ~/pkg/$CI_PROJECT_NAME-$CI_COMMIT_TAG.tar.gz'
-    - 'curl --header "PRIVATE-TOKEN: $API_TOKEN_REPO_STAGING" https://git.prozorro.gov.ua/api/v4/projects/$CI_PROJECT_ID/repository/archive.zip?sha=$CI_COMMIT_SHORT_SHA -o ~/pkg/$CI_PROJECT_NAME-$CI_COMMIT_TAG.zip'
-  only:
-    - /^v?([0-9]{1}).([0-9]{1})/
-  variables:
-    GIT_STRATEGY: none
-
-cleanup:
-  extends: .werf
-  stage: cleanup
-  script:
-    - docker login -u $WERF_IMAGES_CLEANUP_USERNAME -p $WERF_IMAGES_CLEANUP_PASSWORD $WERF_IMAGES_REPO
-    - werf cleanup
-  only:
-    - schedules
+    - docker build -t registry.gitlab.quintagroup.com:443/pricequotation/openprocurement.api:$CI_COMMIT_REF_NAME .
+    - docker push registry.gitlab.quintagroup.com:443/pricequotation/openprocurement.api:$CI_COMMIT_REF_NAME
   tags:
-    - shell
-  variables:
-    WERF_STAGES_STORAGE: ":local"
-
-.base_deploy: &base_deploy
-  stage: deploy
-  script:
-    - helm repo add prozorro $REPO_URL
-    - helm repo update
-    - helm upgrade $CI_COMMIT_REF_SLUG --install prozorro/$HELM_CHART --namespace $HELM_NAMESPACE --set $HELM_TAG_PARAMETER=$TAG --wait --debug
-  dependencies:
-    - build
-  tags:
-    - shell
-  variables:
-    TAG: ci-$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
-
-review:
-  <<: *base_deploy
-  environment:
-    name: review/${CI_COMMIT_REF_SLUG}
-    action: start
-    url: http://api.${CI_COMMIT_REF_SLUG}.${K8S_DOMAIN}/api/2.5/tenders
-    on_stop: stop_review
-  dependencies:
-    - build
+    - dind
   only:
-    - branches
-  except:
-    - master
-    - schedules
-  when: manual
+    - quinta
+    - merge_requests
 
-deploy_master:
-  <<: *base_deploy
-  environment:
-    name: review/${CI_COMMIT_REF_SLUG}
-    url: http://api.${CI_COMMIT_REF_SLUG}.${K8S_DOMAIN}/api/2.5/tenders
-  dependencies:
-    - build
-  only:
-    - master
-  except:
-    - schedules
 
-robot_tests:
-  stage: robot
-  script:
-    - curl "$JENKINS_URL/buildWithParameters?token=$JENKINS_TOKEN&cause=$CI_COMMIT_REF_SLUG&RELEASE_NAME=$CI_COMMIT_REF_SLUG&API_VERSION=2.5"
-    - echo $JENKINS_URL
-  tags:
-    - shell
-  only:
-    - branches
-  dependencies:
-    - review
-  except:
-    - schedules
-  when: manual
+#trigger_deploy:
+#  image: curlimages/curl
+#  stage: deploy
+#  tags:
+#    - dind
+#  script:
+#    - "curl -X POST -F token=$RUN_TOKEN -F ref=$CI_COMMIT_REF_NAME https://gitlab.quintagroup.com/api/v4/projects/1204/trigger/pipeline"
+#  only:
+#    - quinta
+#  when: manual
 
-stop_review:
-  stage: deploy
-  script:
-    - helm delete $CI_COMMIT_REF_SLUG --purge
-  environment:
-    name: review/${CI_COMMIT_REF_SLUG}
-    action: stop
-  tags:
-    - shell
-  only:
-    - branches
-  except:
-    - master
-    - schedules
-  when: manual
 
 .setuptools:
   image: python:2.7
   stage: test
   services:
-    - couchdb:1.6
+    - couchdb:1.7.2
   tags:
-    - kube
+    - dind
   variables:
     GIT_STRATEGY: clone
   only:
@@ -166,7 +56,6 @@ stop_review:
     - apt-get update
     - apt-get install -y libsodium-dev
     - pip install --upgrade pip setuptools
-    - echo '127.0.0.1  couchdb' >> /etc/hosts
 
 test:
   extends: .setuptools
@@ -174,27 +63,19 @@ test:
     - python setup.py test
   when: manual
 
-docs:
-  extends: .setuptools
-  script:
-    - python setup.py test --addopts="docs/tests --color=yes"
-    - (set -e; [[ $(git diff) ]] && { git diff; exit 1; } || exit 0)
 
 .test:
-  image: $CI_REGISTRY_IMAGE:ci-$CI_COMMIT_REF_SLUG-$CI_COMMIT_SHORT_SHA
+  image: registry.gitlab.quintagroup.com:443/pricequotation/openprocurement.api:$CI_COMMIT_REF_NAME
   stage: test
   services:
-    - couchdb:1.6
+    - couchdb:1.7.2
   tags:
-    - kube
+    - dind
   only:
-    - branches
-  except:
-    - schedules
+    - quinta
+    - merge_requests
   dependencies:
     - build
-  before_script:
-    - echo '127.0.0.1  couchdb' >> /etc/hosts
   script:
     - cd /app
     - py.test $TESTS_PATH --cov=$COV_PATH --cov-config=$COV_FILE -v --color=yes --dist=each
@@ -336,3 +217,5 @@ test_tender_cfaselectionua:
     TESTS_PATH: src/openprocurement/tender/cfaselectionua/tests
     COV_PATH: src/openprocurement/tender/cfaselectionua
     COV_FILE: .coveragerc
+
+
