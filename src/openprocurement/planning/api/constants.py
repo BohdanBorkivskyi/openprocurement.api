@@ -12,6 +12,7 @@ PROCEDURES = {
         "competitiveDialogueEU",
         "esco",
         "closeFrameworkAgreementUA",
+        "location"
     ),
     "limited": ("reporting", "negotiation", "negotiation.quick"),
 }

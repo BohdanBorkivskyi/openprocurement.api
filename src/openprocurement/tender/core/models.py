@@ -1208,12 +1208,13 @@ class BaseTender(OpenprocurementSchematicsDocument, Model):
             "funders",
             "submissionMethodDetails_ru",
             "title_en",
-            "submissionMethodDetails",
+            "submissionMethodDetails"
         )
-        _create_role = _edit_role + whitelist("mode", "procurementMethodType")
+        _create_role = _edit_role + whitelist("mode", "procurementMethodType", "coords")
         roles = {
             "create": _create_role,
             "edit_draft": whitelist("status"),
+            "edit_active.tendering": _edit_role + whitelist("coords"),
             "edit": _edit_role,
             "view": _create_role
             + whitelist(
@@ -1299,6 +1300,8 @@ class BaseTender(OpenprocurementSchematicsDocument, Model):
     milestones = ListType(ModelType(Milestone, required=True), validators=[validate_items_uniq, validate_milestones])
     buyers = ListType(ModelType(PlanOrganization, required=True), default=list())
     plans = ListType(ModelType(PlanRelation, required=True), default=list())
+
+    coords = StringType(required=False)
 
     def link_plan(self, plan_id):
         self.plans.append(PlanRelation({"id": plan_id}))

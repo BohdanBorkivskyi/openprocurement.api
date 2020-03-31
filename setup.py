@@ -70,6 +70,7 @@ entry_points = {
         "tender.esco = openprocurement.tender.esco.includeme:includeme",
         "tender.cfaua = openprocurement.tender.cfaua.includeme:includeme",
         "tender.cfaselectionua = openprocurement.tender.cfaselectionua.includeme:includeme",
+        "tender.location = openprocurement.tender.location.includeme:includeme"
     ],
     "openprocurement.agreements.core.plugins": [
         "agreement.cfaua = openprocurement.agreement.cfaua.includeme:includeme"
